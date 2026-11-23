@@ -1,0 +1,7 @@
+# Controller runtime dependencies (installed INSIDE the controller Docker image).
+# Versions are pinned to the exact versions the integration tests were run with,
+# so a rebuild next month produces the same behaviour.
+fastapi==0.162.5          # web framework (routing, validation, OpenAPI docs)
+uvicorn==0.54.0           # ASGI server that runs the FastAPI app
+httpx==0.28.1             # async HTTP client: controller -> worker calls
+python-multipart==0.0.33  # required by FastAPI to parse multipart/form-data uploads
