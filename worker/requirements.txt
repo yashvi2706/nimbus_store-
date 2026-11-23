@@ -1,0 +1,5 @@
+# Worker runtime dependencies (installed INSIDE the worker Docker image).
+# Same pins as the controller so both services behave identically.
+fastapi==0.162.5          # web framework for the internal chunk API
+uvicorn==0.54.0           # ASGI server
+httpx==0.28.1             # async HTTP client: worker -> controller (register/heartbeat)
