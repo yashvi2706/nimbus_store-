@@ -1,0 +1,17 @@
+# Packages for the HOST virtual environment (.venv created by setup.sh):
+#   * the client CLI          (client/objstore_cli.py)
+#   * the automated demo      (demo/run_demo.py)
+#   * the integration tests   (tests/) - these start the controller and workers
+#     as local processes, so they need the services' dependencies too.
+#
+# Deliberately NOT pinned to exact versions: some newest releases (for example
+# python-multipart 0.0.33) need Python 3.11+, which would break setup on a
+# Python 3.10 machine. pip picks the newest release each Python supports.
+# (The Docker images DO pin exact versions: see controller/requirements.txt.)
+# The suite was verified on Python 3.10 and 3.12.
+fastapi
+uvicorn
+httpx
+python-multipart
+requests
+pytest
