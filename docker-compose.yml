@@ -1,0 +1,114 @@
+# =============================================================================
+# Mini Distributed Cloud Object Store - Docker Compose deployment
+#   1 controller  +  4 storage workers  (clients run from the host: see README)
+#
+#   docker compose up --build -d        start everything
+#   docker compose ps                   see health
+#   docker compose down                 stop (DATA IS KEPT in the named volumes)
+#   docker compose down -v              stop AND delete all stored data
+#
+# Kubernetes is NOT used - plain Docker containers, as the specification requires.
+# =============================================================================
+name: mini-object-store
+
+# ---- Shared definition for all four workers (YAML anchors keep it DRY) ------
+x-worker: &worker
+  build: ./worker
+  # `unless-stopped`: Docker restarts a worker that CRASHES, but a worker you
+  # stop by hand (`docker stop worker2`) stays stopped until `docker start`.
+  # That is exactly what the failure demonstration needs.
+  restart: unless-stopped
+  depends_on:
+    controller:
+      condition: service_healthy   # don't start workers before the controller can answer
+  networks: [objstore]
+  healthcheck:
+    # python:slim has no curl, so use Python itself for the probe.
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+  environment: &worker-env
+    CONTROLLER_URL: http://controller:8000
+    HEARTBEAT_INTERVAL: "2"        # seconds between "I am alive" messages
+    DATA_DIR: /data                # the persistent volume mount point
+
+services:
+  controller:
+    build: ./controller
+    container_name: controller
+    restart: unless-stopped
+    ports:
+      # Only the controller is reachable from the host: clients never talk to
+      # workers directly. Change the left side if port 8000 is taken:
+      #   CONTROLLER_PORT=9000 docker compose up -d
+      - "${CONTROLLER_PORT:-8000}:8000"
+    environment:
+      DB_PATH: /data/controller.db        # SQLite metadata database
+      CHUNK_SIZE: "1048576"               # 1 MiB (spec)
+      REPLICATION_FACTOR: "2"             # 2 copies per chunk (spec)
+      HEARTBEAT_TIMEOUT: "6"              # declare a worker dead after 6 s of silence
+      REPAIR_GRACE_SECONDS: "15"          # wait 15 s before re-replicating a dead worker's data
+      SCRUB_INTERVAL: "60"                # integrity scan of all workers every 60 s
+    volumes:
+      - controller_data:/data             # persistent metadata
+    networks: [objstore]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # container_name is set explicitly so the spec's commands work verbatim:
+  #   docker stop worker2 ; docker start worker2
+  worker1:
+    <<: *worker
+    container_name: worker1
+    hostname: worker1
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker1
+      WORKER_URL: http://worker1:8000     # how the controller reaches this worker
+    volumes: [ "worker1_data:/data" ]
+
+  worker2:
+    <<: *worker
+    container_name: worker2
+    hostname: worker2
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker2
+      WORKER_URL: http://worker2:8000
+    volumes: [ "worker2_data:/data" ]
+
+  worker3:
+    <<: *worker
+    container_name: worker3
+    hostname: worker3
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker3
+      WORKER_URL: http://worker3:8000
+    volumes: [ "worker3_data:/data" ]
+
+  worker4:
+    <<: *worker
+    container_name: worker4
+    hostname: worker4
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker4
+      WORKER_URL: http://worker4:8000
+    volumes: [ "worker4_data:/data" ]
+
+# Named volumes = persistent worker storage (spec section 9). They survive
+# `docker stop/start` and `docker compose down`; only `down -v` deletes them.
+volumes:
+  controller_data:
+  worker1_data:
+  worker2_data:
+  worker3_data:
+  worker4_data:
+
+networks:
+  objstore:
