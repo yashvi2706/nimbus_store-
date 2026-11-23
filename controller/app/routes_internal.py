@@ -12,13 +12,17 @@ Admin (extra, for visibility/demo; D-16):
     GET  /api/v1/admin/events       recent operational events
     POST /api/v1/admin/scrub        deep-scan all workers for corruption NOW
     POST /api/v1/admin/repair       run a maintenance/repair pass NOW
+    GET  /api/v1/admin/chunkmap     which worker holds which chunk (feeds the dashboard)
+    GET  /dashboard                 live HTML dashboard with the chunk map
     GET  /health                    liveness probe
 """
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import config
@@ -29,6 +33,8 @@ internal = APIRouter(tags=["internal"])
 admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 _WORKER_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+# The dashboard is one static HTML file that polls the admin API (D-28).
+_DASHBOARD_FILE = Path(__file__).parent / "static" / "dashboard.html"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +148,83 @@ async def cluster_status(request: Request):
     }
 
 
+def _chunk_state(live_copies: int, rf: int) -> str:
+    """Same classification as Cluster.replication_report, for one chunk."""
+    if live_copies == 0:
+        return "unavailable"
+    if live_copies < rf:
+        return "under_replicated"
+    if live_copies == rf:
+        return "healthy"
+    return "over_replicated"
+
+
+@admin.get("/chunkmap")
+async def chunk_map(request: Request, max_objects: int = Query(100, ge=1, le=1000)):
+    """
+    Which worker holds which chunk, per object (newest objects first).
+
+    This is the CONTROLLER'S RECORD (the database), so it shows what the system
+    believes; the live/dead status of each holder comes from the heartbeats.
+    `summary` covers every object; `objects` is cut at `max_objects`.
+    """
+    db = request.app.state.cluster.db
+    rf = config.REPLICATION_FACTOR
+    status_of = {w["worker_id"]: w["status"] for w in db.list_workers()}
+
+    by_object: dict[str, list[dict]] = {}
+    summary = {"healthy": 0, "under_replicated": 0, "unavailable": 0, "over_replicated": 0}
+    held_by_worker: dict[str, int] = {}
+    for c in db.all_chunks_with_holders().values():
+        live = sum(1 for h in c["holders"] if status_of.get(h) == "alive")
+        state = _chunk_state(live, rf)
+        summary[state] += 1
+        for h in c["holders"]:
+            held_by_worker[h] = held_by_worker.get(h, 0) + 1
+        by_object.setdefault(c["object_id"], []).append(
+            {
+                "chunk_id": c["chunk_id"],
+                "index": c["idx"],
+                "size": c["size"],
+                "live_copies": live,
+                "state": state,
+                "holders": [{"worker_id": h, "status": status_of.get(h, "unknown")} for h in c["holders"]],
+            }
+        )
+
+    total_objects = db.count_objects()
+    objects = []
+    for obj in db.list_objects(max_objects, 0):  # newest first
+        chunks = by_object.get(obj["object_id"], [])
+        objects.append(
+            {
+                "object_id": obj["object_id"],
+                "name": obj["name"],
+                "size": obj["size"],
+                "created_at": obj["created_at"],
+                "num_chunks": obj["num_chunks"],
+                "chunks": chunks,
+            }
+        )
+
+    return {
+        "replication_factor": rf,
+        "chunk_size": config.CHUNK_SIZE,
+        "workers": [
+            {
+                "worker_id": w,
+                "status": status_of[w],
+                "chunks": held_by_worker.get(w, 0),
+            }
+            for w in sorted(status_of)
+        ],
+        "summary": {**summary, "total_chunks": sum(summary.values())},
+        "objects_total": total_objects,
+        "objects_shown": len(objects),
+        "objects": objects,
+    }
+
+
 @admin.get("/events")
 async def events(request: Request, limit: int = Query(50, ge=1, le=500)):
     """Most recent operational events, oldest first."""
@@ -158,6 +241,14 @@ async def run_scrub(request: Request):
 async def run_repair(request: Request):
     """Run a reconcile + repair pass right now (instead of waiting for the timer)."""
     return await maintenance_pass(request.app.state.cluster)
+
+
+@internal.get("/dashboard", include_in_schema=False)
+async def dashboard():
+    """Serve the live dashboard page (static/dashboard.html)."""
+    if not _DASHBOARD_FILE.is_file():
+        raise ApiError(404, "dashboard_not_installed", "controller/app/static/dashboard.html is missing")
+    return FileResponse(_DASHBOARD_FILE, media_type="text/html")
 
 
 @internal.get("/health")
