@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Object Store - Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c2330; --muted: #5d6778; --line: #dde1e8;
+    --ok: #1f8a4c; --ok-bg: #dff3e7;
+    --warn: #b36b00; --warn-bg: #fdecc8;
+    --bad: #b3261e; --bad-bg: #fadbd8;
+    --over: #5b4bb7; --over-bg: #e6e2fa;
+    --dead: #8a8f99; --accent: #2457c5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2e3542;
+      --ok: #55c488; --ok-bg: #173826;
+      --warn: #f0b24a; --warn-bg: #3d2d0e;
+      --bad: #ff8077; --bad-bg: #431a17;
+      --over: #a89cf2; --over-bg: #2a2650;
+      --dead: #6f7682; --accent: #7aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
+  h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  main { padding: 16px 20px 40px; max-width: 1200px; margin: 0 auto; }
+  .muted { color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .stat { flex: 1 1 150px; }
+  .stat .n { font-size: 26px; font-weight: 650; }
+  section { margin-top: 18px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .b-healthy, .b-alive { background: var(--ok-bg); color: var(--ok); }
+  .b-under_replicated { background: var(--warn-bg); color: var(--warn); }
+  .b-unavailable, .b-dead { background: var(--bad-bg); color: var(--bad); }
+  .b-over_replicated { background: var(--over-bg); color: var(--over); }
+  .b-unknown { background: var(--line); color: var(--muted); }
+
+  /* ---- workers ---- */
+  .workers { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .worker.dead { opacity: .8; border-color: var(--bad); }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  .bar > div { height: 100%; background: var(--accent); }
+
+  /* ---- legend / tabs ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; margin: 8px 0 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .tabs button { border: 0; border-radius: 0; }
+  .tabs button.on { background: var(--accent); color: #fff; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  input[type=search] { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+                       background: var(--card); color: var(--text); min-width: 200px; }
+
+  /* ---- chunk tiles (colour AND symbol, so it works without colour vision) ---- */
+  .tile { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+          border-radius: 5px; font-size: 12px; font-weight: 700; margin: 2px; border: 1px solid transparent; }
+  .t-healthy { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .t-under_replicated { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .t-unavailable { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .t-over_replicated { background: var(--over-bg); color: var(--over); border-color: var(--over); }
+
+  /* ---- by object ---- */
+  .obj { margin-bottom: 12px; }
+  .obj-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+  .obj-name { font-weight: 650; word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 13px; }
+  th, td { padding: 4px 8px; text-align: center; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  td.held-alive { color: var(--ok); font-weight: 700; }
+  td.held-dead { color: var(--bad); font-weight: 700; }
+  td.none { color: var(--line); }
+  details > summary { cursor: pointer; color: var(--accent); margin-top: 6px; }
+
+  /* ---- by worker ---- */
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .col-tiles { max-height: 340px; overflow: auto; }
+
+  /* ---- events ---- */
+  .events { max-height: 260px; overflow: auto; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .events div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Mini Object Store &middot; Dashboard</h1>
+    <div class="muted" id="sub">connecting&hellip;</div>
+  </div>
+  <div class="row" style="align-items:center">
+    <label class="muted"><input type="checkbox" id="auto" checked> auto-refresh (2 s)</label>
+    <button id="btn-repair">Run repair</button>
+    <button id="btn-scrub">Run scrub</button>
+    <button id="btn-refresh">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div class="row" id="stats"></div>
+
+  <section>
+    <h2>Workers</h2>
+    <div class="workers" id="workers"></div>
+  </section>
+
+  <section class="card">
+    <h2>Chunk map</h2>
+    <div class="toolbar">
+      <div class="tabs">
+        <button id="tab-obj" class="on">By object</button>
+        <button id="tab-wrk">By worker</button>
+      </div>
+      <input type="search" id="filter" placeholder="filter by object name or id">
+      <span class="muted" id="shown"></span>
+    </div>
+    <div class="legend">
+      <span><span class="tile t-healthy">&#10003;</span> healthy (all copies live)</span>
+      <span><span class="tile t-under_replicated">!</span> under-replicated</span>
+      <span><span class="tile t-unavailable">&times;</span> unavailable (0 live copies)</span>
+      <span><span class="tile t-over_replicated">+</span> surplus copy</span>
+    </div>
+    <div id="map"></div>
+  </section>
+
+  <section class="card">
+    <h2>Recent events</h2>
+    <div class="events" id="events"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const SYMBOL = { healthy: "\u2713", under_replicated: "!", unavailable: "\u00d7", over_replicated: "+" };
+const LABEL = { healthy: "healthy", under_replicated: "under-replicated",
+                unavailable: "unavailable", over_replicated: "surplus copy" };
+let view = "obj";
+let lastMap = null;
+let timer = null;
+
+// Object names are chosen by users, so everything goes through esc() before innerHTML.
+function esc(v) {
+  return String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function fmtBytes(n) {
+  if (n == null) return "-";
+  const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(1) : n) + " " + u[i];
+}
+function $(id) { return document.getElementById(id); }
+
+async function getJSON(path) {
+  const r = await fetch(path, { cache: "no-store" });
+  if (!r.ok) throw new Error(path + " -> HTTP " + r.status);
+  return r.json();
+}
+
+function worstState(chunks) {
+  for (const s of ["unavailable", "under_replicated", "over_replicated"]) {
+    if (chunks.some(c => c.state === s)) return s;
+  }
+  return chunks.length ? "healthy" : "unknown";
+}
+
+// ------------------------------------------------------------------ render
+function renderStats(cluster, map) {
+  const s = map.summary, rep = cluster.replication;
+  const cards = [
+    ["Workers alive", cluster.alive_workers + " / " + cluster.workers.length],
+    ["Objects", map.objects_total],
+    ["Chunks", s.total_chunks],
+    ["Replication", rep.replication_ok ? "OK" : "DEGRADED"],
+    ["Under-replicated", s.under_replicated],
+    ["Unavailable", s.unavailable],
+  ];
+  $("stats").innerHTML = cards.map(([k, v]) =>
+    `<div class="card stat"><div class="muted">${esc(k)}</div><div class="n">${esc(v)}</div></div>`).join("");
+}
+
+function renderWorkers(cluster) {
+  const maxChunks = Math.max(1, ...cluster.workers.map(w => w.chunks_recorded));
+  $("workers").innerHTML = cluster.workers.map(w => {
+    const dead = w.status !== "alive";
+    const pct = Math.round(100 * w.chunks_recorded / maxChunks);
+    return `<div class="card worker ${dead ? "dead" : ""}">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <strong>${esc(w.worker_id)}</strong><span class="badge b-${esc(w.status)}">${esc(w.status)}</span>
+      </div>
+      <div class="muted">${dead ? "down for " + esc(w.seconds_dead ?? "?") + " s"
+                                 : "last heartbeat " + esc(w.seconds_since_heartbeat) + " s ago"}</div>
+      <div>${esc(w.chunks_recorded)} chunks &middot; ${esc(fmtBytes(w.bytes_recorded))}</div>
+      <div class="muted">worker reports ${esc(w.chunks_reported ?? "-")} chunks &middot; free ${esc(fmtBytes(w.free_bytes))}</div>
+      <div class="bar"><div style="width:${pct}%"></div></div>
+    </div>`;
+  }).join("");
+}
+
+function tile(c, extra) {
+  const tip = `${c.chunk_id}\nstate: ${LABEL[c.state]}\nlive copies: ${c.live_copies}\nsize: ${fmtBytes(c.size)}\nheld by: ` +
+    (c.holders.length ? c.holders.map(h => h.worker_id + (h.status === "alive" ? "" : " (" + h.status + ")")).join(", ") : "nobody") +
+    (extra || "");
+  return `<span class="tile t-${esc(c.state)}" title="${esc(tip)}">${SYMBOL[c.state]}</span>`;
+}
+
+function renderByObject(map, q) {
+  const workers = map.workers.map(w => w.worker_id);
+  const objs = map.objects.filter(o => !q || o.name.toLowerCase().includes(q) || o.object_id.toLowerCase().includes(q));
+  $("shown").textContent = `${objs.length} of ${map.objects_shown} objects shown` +
+    (map.objects_total > map.objects_shown ? ` (newest ${map.objects_shown} of ${map.objects_total})` : "");
+  if (!objs.length) return `<div class="muted">No objects${q ? " match the filter" : " stored yet. Upload one with the client."}</div>`;
+
+  return objs.map(o => {
+    const worst = worstState(o.chunks);
+    const strip = o.chunks.map(c => tile(c)).join("");
+    const rows = o.chunks.map(c => {
+      const cells = workers.map(w => {
+        const h = c.holders.find(x => x.worker_id === w);
+        if (!h) return `<td class="none">&middot;</td>`;
+        return h.status === "alive"
+          ? `<td class="held-alive" title="${esc(w)} holds a live copy">&#9679;</td>`
+          : `<td class="held-dead" title="${esc(w)} is ${esc(h.status)}">&#9675;</td>`;
+      }).join("");
+      return `<tr><td>#${esc(c.index)} <span class="muted">${esc(fmtBytes(c.size))}</span></td>${cells}
+              <td><span class="badge b-${esc(c.state)}">${esc(LABEL[c.state])}</span></td></tr>`;
+    }).join("");
+    const table = `<table><thead><tr><th>chunk</th>${workers.map(w => `<th>${esc(w)}</th>`).join("")}<th>state</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+    const open = o.chunks.length <= 8 ? "open" : "";
+    return `<div class="obj card">
+      <div class="obj-head">
+        <span class="obj-name">${esc(o.name)}</span>
+        <span class="badge b-${esc(worst)}">${esc(LABEL[worst] || "no chunks")}</span>
+        <span class="muted">${esc(fmtBytes(o.size))} &middot; ${esc(o.num_chunks)} chunk(s) &middot; ${esc(o.object_id)}</span>
+      </div>
+      <div>${strip}</div>
+      <details ${open}><summary>chunk &times; worker matrix (&#9679; live copy, &#9675; copy on a dead worker)</summary>${table}</details>
+    </div>`;
+  }).join("");
+}
+
+function renderByWorker(map, cluster, q) {
+  // Invert the map: worker -> the chunks it holds, remembering the owning object name.
+  const held = {};
+  map.workers.forEach(w => { held[w.worker_id] = []; });
+  map.objects.forEach(o => {
+    if (q && !o.name.toLowerCase().includes(q) && !o.object_id.toLowerCase().includes(q)) return;
+    o.chunks.forEach(c => c.holders.forEach(h => {
+      (held[h.worker_id] = held[h.worker_id] || []).push({ c, name: o.name });
+    }));
+  });
+  $("shown").textContent = "";
+  return `<div class="cols">` + map.workers.map(w => {
+    const list = held[w.worker_id] || [];
+    const tiles = list.map(({ c, name }) => tile(c, `\nobject: ${name} (chunk #${c.index})`)).join("");
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between"><strong>${esc(w.worker_id)}</strong>
+        <span class="badge b-${esc(w.status)}">${esc(w.status)}</span></div>
+      <div class="muted">${list.length} chunk(s) recorded</div>
+      <div class="col-tiles">${tiles || '<span class="muted">empty</span>'}</div>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+function renderMap(cluster) {
+  if (!lastMap) return;
+  const q = $("filter").value.trim().toLowerCase();
+  $("map").innerHTML = view === "obj" ? renderByObject(lastMap, q) : renderByWorker(lastMap, cluster, q);
+}
+
+function renderEvents(ev) {
+  const rows = ev.events.slice(-40).reverse().map(e =>
+    `<div><span class="muted">${esc(e.time.replace("T", " ").replace(/\.\d+Z?$/, ""))}</span> ` +
+    `<strong>${esc(e.kind)}</strong> ${esc(e.message)}</div>`);
+  $("events").innerHTML = rows.join("") || '<span class="muted">no events yet</span>';
+}
+
+// ------------------------------------------------------------------ refresh
+let lastCluster = null;
+async function refresh() {
+  try {
+    const [cluster, map, ev] = await Promise.all([
+      getJSON("/api/v1/admin/cluster"), getJSON("/api/v1/admin/chunkmap"), getJSON("/api/v1/admin/events?limit=40"),
+    ]);
+    lastCluster = cluster; lastMap = map;
+    renderStats(cluster, map); renderWorkers(cluster); renderMap(cluster); renderEvents(ev);
+    $("sub").textContent = `replication factor ${map.replication_factor} \u00b7 chunk size ${fmtBytes(map.chunk_size)} \u00b7 updated ${new Date().toLocaleTimeString()}`;
+    $("sub").classList.remove("err");
+  } catch (e) {
+    $("sub").textContent = "cannot reach the controller: " + e.message;
+    $("sub").classList.add("err");
+  }
+}
+
+async function action(path, button) {
+  button.disabled = true;
+  try { await fetch(path, { method: "POST" }); } catch (e) { /* shown by the next refresh */ }
+  button.disabled = false;
+  refresh();
+}
+
+function schedule() {
+  clearInterval(timer);
+  if ($("auto").checked) timer = setInterval(refresh, 2000);
+}
+
+$("btn-refresh").onclick = refresh;
+$("btn-repair").onclick = () => action("/api/v1/admin/repair", $("btn-repair"));
+$("btn-scrub").onclick = () => action("/api/v1/admin/scrub", $("btn-scrub"));
+$("auto").onchange = schedule;
+$("filter").oninput = () => renderMap(lastCluster);
+$("tab-obj").onclick = () => { view = "obj"; $("tab-obj").className = "on"; $("tab-wrk").className = ""; renderMap(lastCluster); };
+$("tab-wrk").onclick = () => { view = "wrk"; $("tab-wrk").className = "on"; $("tab-obj").className = ""; renderMap(lastCluster); };
+
+refresh();
+schedule();
+</script>
+</body>
+</html>
