@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Logs and local scratch files created while running the demos
+*.log
+demo_output.txt
+*.bin
+downloaded.txt
+my_test_file.txt
+hello.txt
+
+# Local-only Docker helpers (not part of the project)
+docker-compose.override.yml
+wheels/
